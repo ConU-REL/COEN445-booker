@@ -22,8 +22,12 @@ sock.bind((socket.gethostname(), port))
 # set socket to be non-blocking
 sock.setblocking(0)
 
-# store received messages
+# store received messages (raw)
+received_raw = []
+# store received messages (in objects)
 received = []
+# store messages to send
+to_send = []
 
 
 def main():
@@ -32,9 +36,6 @@ def main():
     if curs.fetchone()[0] != 1:
         print("Creating table")
         create_table()
-
-    # test = Message("REQUEST", "asd", "asd", "asdf")
-
 
     # create the listener and queue processor threads
     thread_udp = threading.Thread(target=listen, daemon=True)
@@ -53,25 +54,20 @@ def main():
 
 
 def queue():
-    while True:
-        time.sleep(0.25)
-        while received:
-            msg = received.pop()
-            ip = msg[0].split(".")[:3]
-            # disregard packet if not from same subnet
-            if ip != ip_local_sub:
-                continue
-            print("Message received from:", msg[0])
-            print("Message contents:", msg[1])
+    pass
 
 
 def listen():
     while True:
         try:
             data, addr = sock.recvfrom(1024)
-            received.append([addr[0], data.decode("utf-8")])
-            # debug:
-            print("Received:", data.decode("utf-8"), "from:", addr[0])
+            ip_sub = addr[0].split(".")[:3]
+            # disregard packet if not from same subnet
+            if ip_sub != ip_local_sub:
+                continue
+            received.append(Message())
+            received[-1].decode(addr[0], data.decode("utf-8"))
+            print(received[-1])
         except BlockingIOError:
             pass
 
