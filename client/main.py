@@ -19,13 +19,17 @@ def main():
     # set socket to be non-blocking
     sock.setblocking(0)
 
+    test_req = b"REQUEST,;,0,;,2019-12-12,;,13:50:10,;,3,;,asdf,asdf,asdf,asdf,;,topic"
+
+
+
     print("Main Menu")
     print("q: quit")
     print("s: send message")
     while True:
         inp = input()
         if inp == "s":
-            sock.sendto(b'test msg', (ip_server, port_send))
+            sock.sendto(test_req, (ip_server, port_send))
         elif inp == "q":
             exit()
 

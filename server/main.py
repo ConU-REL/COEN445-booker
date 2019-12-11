@@ -22,12 +22,12 @@ sock.bind((socket.gethostname(), port))
 # set socket to be non-blocking
 sock.setblocking(0)
 
-# store received messages (raw)
-received_raw = []
 # store received messages (in objects)
 received = []
 # store messages to send
 to_send = []
+# store messages waiting on timeout
+waiting = []
 
 
 def main():
@@ -37,15 +37,21 @@ def main():
         print("Creating table")
         create_table()
 
-    # create the listener and queue processor threads
-    thread_udp = threading.Thread(target=listen, daemon=True)
-    thread_queue = threading.Thread(target=queue, daemon=True)
+    # create the threads
+    thread_udp = threading.Thread(target=listen, daemon=True)       # listener thread
+    thread_proc = threading.Thread(target=processing, daemon=True)      # processing thread
 
-    # start both threads
-    thread_queue.start()
+    # start threads
+    thread_proc.start()
     thread_udp.start()
     
-    # wait for user input
+    # received.append(Message())
+    # received[-1].decode("127.0.0.1", "REQUEST,;,0,;,2019-12-11,;,13:50:10,;,3,;,asdf,asdf,asdf,asdf,;,topic")
+    # print(received[-1])
+    # print(received[-1].encode())
+    
+    
+    # wait for user input (i.e. to quit)
     print("Main Menu")
     print("q: quit")
     while True:
@@ -53,8 +59,32 @@ def main():
             exit()
 
 
-def queue():
-    pass
+def processing():
+    while True:
+        # process all messages waiting on timeout first (list sorted by soonest first)
+        while waiting:
+            pass
+        if received and any(x.formed for x in received):
+            rec = received.pop(0)
+            
+            if rec.msg == "REQUEST":
+                sql_file = sqlite3.connect("server/server_db.db")
+                proc_curs = sql_file.cursor()
+                room = check_avail(proc_curs, rec.date, rec.time)
+                if room != -1:
+                    booking(proc_curs, rec, room)
+                sql_file.commit()
+                sql_file.close()
+            elif rec.msg == "CANCEL":
+                pass
+            elif rec.msg == "ACCEPT":
+                pass
+            elif rec.msg == "REJECT":
+                pass
+            elif rec.msg == "WITHDRAW":
+                pass
+            elif rec.msg == "ADD":
+                pass
 
 
 def listen():
@@ -75,22 +105,30 @@ def listen():
 def create_table():
     '''Create the necessary server-side SQL table if it doesn't exist'''
     curs.execute('''create table Bookings (id integer unique primary key not null, \
-        date text not null unique, organizer text not null, participants text not null, \
-        room integer not null)''')
+        date text not null unique, time text not null unique, organizer text not null, participants text not null, \
+        room integer not null, tentative integer not null)''')
     sql_file.commit()
     sql_file.close()
 
 
-def booking(cmd = False):
-    '''Function to load and store bookings. 0 => load, 1 => store'''
+def booking(cursor, msg, room, tentative=True, cmd=False):
+    '''Function to load and store bookings. 0 => store, 1 => load'''
     if not cmd:
+    # store
+        params = (msg.date, msg.time, msg.source, ",".join(msg.ls_parts), room, tentative)
+        cursor.execute("INSERT INTO Bookings VALUES (NULL, ?, ?, ?, ?, ?, ?)", params)
+    else:
     # load
         pass
-    else:
-    # store
-        pass
 
 
+def check_avail(cursor, date, time):
+    cursor.execute(''' SELECT count(room) FROM Bookings WHERE date='%s' AND time='%s' ''' % (date, time))
+    res = cursor.fetchone()
+    if len(res) == no_rooms:
+        return -1
+    elif len(res) <= no_rooms:
+        return len(res)
 
 if __name__ == "__main__":
     main()
