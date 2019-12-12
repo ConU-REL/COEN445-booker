@@ -75,7 +75,7 @@ def main():
                 print("Bad input, try again.")
                 continue
 
-            print("Enter hour of meeting betwen 9h and 15h (ex. HH, 24h format): ", end="")
+            print("Enter hour of meeting betwen 9h and 17h (ex. HH, 24h format): ", end="")
             time = input()
             dt = None
             if time == "q":
@@ -222,7 +222,7 @@ def proc():
                 msg = waiting.pop(0)
                 
                 # check if message has been satisfied
-                if msg.header == "REQUEST":
+                if msg.header == "REQUEST" or msg.header == "ACCEPT":
                     proc_curs.execute("SELECT confirmed FROM Bookings WHERE id=?", (msg.rq_id,))
                     res = proc_curs.fetchone()[0]
                     if not res:
@@ -232,8 +232,6 @@ def proc():
                     res = proc_curs.fetchone()[0]
                     if not res:
                         continue
-                # elif
-                
                     
                 # if we reach a message that is still timed out, all the following ones will be too
                 if not msg.timer.expired:
@@ -260,7 +258,8 @@ def proc():
                     proc_curs.execute("UPDATE Bookings SET confirmed=? WHERE id=?", (0, rec.rq_id))
                 elif rec.resp_reason == "CANCEL RECEIVED" or rec.resp_reason == "MEETING DNE":
                     proc_curs.execute("DELETE FROM Bookings WHERE mt_id=?", (rec.rq_id,))
-            
+                sql_file.commit()
+
             elif rec.header == "SCHEDULED":
                 proc_curs.execute("UPDATE Bookings SET confirmed=? WHERE id=?", (1, rec.rq_id))
                 proc_curs.execute("UPDATE Bookings SET room=? WHERE id=?", (rec.room, rec.rq_id))
@@ -273,7 +272,8 @@ def proc():
                 if not res:
                     params = (request_id, rec.mt_id, rec.date, rec.time, rec.org, -1, rec.topic, -1)
                     proc_curs.execute("INSERT INTO Bookings VALUES (?, ?, ?, ?, ?, ?, ?, ?)", params)
-            
+            elif rec.header == "CONFIRM":
+                proc_curs.execute("UPDATE Bookings SET confirmed=? WHERE mt_id=?", (1, rec.mt_id))
             sql_file.commit()
         sql_file.close()
                     

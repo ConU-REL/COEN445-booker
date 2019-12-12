@@ -83,6 +83,9 @@ def processing():
                 if msg.retries < retries.get(msg.header)-1:
                     msg.retries += 1
                     msg.timer.restart()
+                    proc_curs.execute("SELECT participants FROM Bookings WHERE id=?", (msg.mt_id,))
+                    res = proc_curs.fetchone()[0]
+                    msg.ls_parts = literal_eval(res)
                     send_parts(msg)
                     waiting.append(msg)
                 # if there are no retries left
@@ -108,7 +111,6 @@ def processing():
                         
                     # if we don't
                     else:
-                        # cancel_msg = Message("CANCEL", msg.source, msg.mt_id, "PARTICIPANTS")
                         msg.header = "CANCEL"
                         msg.resp_reason = "PARTICIPANTS"
                         send_parts(msg, True)
@@ -202,9 +204,13 @@ def processing():
                     if int(rec.source) in list(rec.ls_parts.keys()):
                         # set participant to accepted
                         rec.ls_parts[rec.source] = 1
+                        print(rec.ls_parts[rec.source])
                         # update sql entry
                         proc_curs.execute("UPDATE Bookings SET participants=? WHERE id=?", (str(rec.ls_parts), rec.mt_id))
                         sql_file.commit()
+                        proc_curs.execute("SELECT room FROM Bookings WHERE id=?", (rec.mt_id,))
+                        res = proc_curs.fetchone()[0]
+                        rec.room = res
                         
                         # confirm with requestor
                         rec.header = "CONFIRM"
@@ -264,6 +270,7 @@ def processing():
                         rec[rec.source] = 0
                         # update sql entry
                         proc_curs.execute("UPDATE Bookings SET participants=? WHERE id=?", (str(rec.ls_parts), rec.mt_id))
+                        sql_file.commit()
                         
                         # get organizer ip
                         proc_curs.execute("SELECT organizer FROM Bookings WHERE id=?", (rec.mt_id))
@@ -331,6 +338,7 @@ def processing():
                         rec[rec.source] = 1
                         # update sql entry
                         proc_curs.execute("UPDATE Bookings SET participants=? WHERE id=?", (str(rec.ls_parts), rec.mt_id))
+                        sql_file.commit()
                         
                         # confirm with requestor
                         rec.header = "CONFIRM"
@@ -443,7 +451,6 @@ def send():
                     dest.append(snd.source)
                     dest = ".".join(dest)
                     sock.sendto(resp.encode(), (dest, port_send))
-                    
 
 def send_parts(msg, group=0):
     # Send the messages
@@ -476,9 +483,6 @@ def booking(cursor, msg, room, tentative=True, cmd=False):
         params = (msg.date, msg.time, room)
         cursor.execute("SELECT id FROM Bookings WHERE date=? AND time=? AND room=?", params)
         return cursor.fetchone()[0]
-    else:
-    # load
-        pass
 
 
 def check_avail(cursor, date, time):

@@ -47,6 +47,11 @@ class Message:
             self.min_parts = self.args[3]
             self.ls_parts = self.args[4]
             self.topic = self.args[5]
+        
+        elif self.header == "CONFIRM":
+            self.mt_id = self.args[0]
+            self.room = self.args[1]
+        
         self.formed = True
     
     def encode(self):
