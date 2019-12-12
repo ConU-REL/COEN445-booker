@@ -61,7 +61,7 @@ class Message:
     
     def encode(self):
         if self.header == "RESPONSE":
-            concat = ",;,".join([self.header, self.rq_id, self.resp_reason])
+            concat = ",;,".join([self.header, str(self.rq_id), self.resp_reason])
         elif self.header == "INVITE":
             concat = ",;,".join([self.header, self.mt_id, self.date, self.time, self.topic, self.source])
         elif self.header == "CANCEL":

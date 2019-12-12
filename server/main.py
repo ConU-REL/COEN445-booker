@@ -144,7 +144,6 @@ def processing():
                 # TODO test this
                 proc_curs.execute("SELECT count(id) FROM Bookings WHERE id=?", (rec.mt_id))
                 res = proc_curs.fetchone()[0]
-                print(res)
                 # if meeting doesn't exist, inform requestor
                 if not res:
                     rec.header = "RESPONSE"
@@ -164,6 +163,16 @@ def processing():
                     rec.ls_parts = literal_eval(res)
                     
                     send_parts(rec, True)
+                    
+                    rec.header = "RESPONSE"
+                    rec.resp_reason = "CANCEL RECEIVED"
+                    
+                    dest = ip_local_sub[0:]
+                    dest.append(rec.source)
+                    dest = ".".join(dest)
+                    
+                    sock.sendto(rec.encode(), (dest, port_send))
+                    
             elif rec.header == "ACCEPT":
                 # TODO test this
                 # check if meeting exists

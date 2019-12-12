@@ -38,8 +38,8 @@ received = []
 waiting = []
 
 # Timeouts
-timeouts = {'REQUEST':15}
-retries = {'REQUEST':3}
+timeouts = {'REQUEST':15, 'CANCEL':15, 'RESPONSE':15}
+retries = {'REQUEST':3, 'CANCEL':3, 'RESPONSE':3}
     
 def main():
     curs.execute(''' SELECT count(name) FROM sqlite_master WHERE type='table' AND name='Bookings' ''')
@@ -93,7 +93,7 @@ def main():
                 print("Can't schedule meeting in the past.")
                 continue
             
-            print("Enter participants separated by a comma: ", end="")
+            print("Enter participants separated by commas: ", end="")
             parts = input()
             if parts == "q":
                 exit()
@@ -123,7 +123,6 @@ def main():
             msg = Message("REQUEST", 0, str(request_id), date.strftime("%Y-%m-%d"), dt.strftime("%H:%M:%S"), min_parts, ",".join(parts), topic)
             msg.rq_id = str(request_id)
             params = (int(msg.rq_id), msg.args[1], msg.args[2], id_local, -1, msg.args[5], -1)
-            print(params)
             curs.execute("INSERT INTO Bookings VALUES (?, ?, ?, ?, ?, ?, ?)", params)
             sql_file.commit()
             request_id += 1
@@ -131,6 +130,23 @@ def main():
             msg.timer.set_timeout(timeouts.get(msg.header))
             
             sock.sendto(msg.encode(), (ip_server, port_send))
+            msg.timer.change_status(True)
+            waiting.append(msg)
+        elif inp == "c":
+            print("Confirmed meetings:")
+            curs.execute("SELECT * FROM Bookings WHERE confirmed=? AND organizer=?", (1,id_local))
+            res = curs.fetchall()
+            print("MT ID, Date, Time, Organizer, Room, Topic, Confirmed")
+            print(*res, sep="\n")
+            print("Which meeting would you like to cancel? ", end="")
+            inp = input()
+            if inp == "q":
+                exit()
+            elif not bool(re.search(r'^\d+$', inp)):
+                continue
+            msg = Message("CANCEL", "127.0.0.1", inp)
+            sock.sendto(msg.encode(), (ip_server, port_send))
+            msg.timer.set_timeout(timeouts.get(msg.header))
             msg.timer.change_status(True)
             waiting.append(msg)
         elif inp == "q":
@@ -167,7 +183,12 @@ def proc():
                 if msg.header == "REQUEST":
                     proc_curs.execute("SELECT confirmed FROM Bookings WHERE id=?", (msg.rq_id,))
                     res = proc_curs.fetchone()[0]
-                    if(not res):
+                    if not res:
+                        continue
+                elif msg.header == "CANCEL":
+                    proc_curs.execute("SELECT count(id) FROM Bookings WHERE id=?", (msg.rq_id,))
+                    res = proc_curs.fetchone()[0]
+                    if not res:
                         continue
                     
                 # if we reach a message that is still timed out, all the following ones will be too
@@ -176,7 +197,7 @@ def proc():
                     break
                 
                 # check if message has any retries left
-                elif msg.retries < retries.get(msg.header):
+                elif msg.retries < retries.get(msg.header)-1:
                     msg.retries += 1
                     msg.timer.restart()
                     print("RETRYING")
@@ -191,13 +212,16 @@ def proc():
                     if rec.resp_reason == "PROCESSING":
                         proc_curs.execute("UPDATE Bookings SET confirmed=? WHERE id=?", (0, rec.rq_id))
                         sql_file.commit()
+                    if rec.resp_reason == "CANCEL RECEIVED":
+                        proc_curs.execute("DELETE FROM Bookings WHERE id=?", (rec.rq_id,))
+                        sql_file.commit()
                 
                 elif rec.header == "SCHEDULED":
                     proc_curs.execute("UPDATE Bookings SET confirmed=? WHERE id=?", (1, rec.rq_id))
                     proc_curs.execute("UPDATE Bookings SET room=? WHERE id=?", (rec.room, rec.rq_id))
                     sql_file.commit()
                 elif rec.header == "NOT SCHEDULED":
-                    proc_curs.execute("DELETE FROM Bookings WHERE id=?", (rec.rq_id))
+                    proc_curs.execute("DELETE FROM Bookings WHERE id=?", (rec.rq_id,))
                     sql_file.commit()
     
         sql_file.close()
