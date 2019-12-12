@@ -39,3 +39,6 @@ class Timer:
     
     def is_running(self):
         return self.state
+    
+    def set_timeout(self, time):
+        self.time = timedelta(seconds=time)
