@@ -21,7 +21,8 @@ sock.setblocking(0)
     
     
 def main():
-    test_req = b"REQUEST,;,0,;,2019-12-12,;,13:50:10,;,3,;,1,2,3,4,;,topic"
+    test_req = b"REQUEST,;,0,;,2019-12-12,;,13:50:10,;,0,;,1,2,3,4,;,topic"
+    test_cancel = b"CANCEL,;,1"
 
     thread_recv = threading.Thread(target=recv, daemon=True)
     thread_recv.start()
@@ -30,10 +31,13 @@ def main():
     print("Main Menu")
     print("q: quit")
     print("s: send message")
+    print("c: cancel meeting")
     while True:
         inp = input()
         if inp == "s":
             sock.sendto(test_req, (ip_server, port_send))
+        elif inp == "c":
+            sock.sendto(test_cancel, (ip_server, port_send))
         elif inp == "q":
             exit()
 

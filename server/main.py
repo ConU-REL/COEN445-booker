@@ -1,6 +1,7 @@
 import sys, socket, sqlite3, keyboard, threading
 import time
 from messages import Message
+from ast import literal_eval
 
 # get local ip address
 ip_local = socket.gethostbyname(socket.gethostname())
@@ -66,34 +67,48 @@ def processing():
         sql_file = sqlite3.connect("server/server_db.db")
         proc_curs = sql_file.cursor()
         # process all messages waiting on timeout first (list sorted by soonest first)
-        while waiting:
+        if waiting:
             for i in waiting:
                 i.timer.update()
             waiting.sort(key=lambda x: x.timer.time_left.seconds)
-            
-            for msg in waiting:
+            while True:
+                if not waiting:
+                    break
+                msg = waiting.pop(0)
                 # if we reach a message that is still timed out, all the following ones will be too
                 if not msg.timer.expired:
+                    waiting.append(msg)
                     break
                 # check if message has any retries left
-                if msg.retries < retries.get(msg.msg):
+                if msg.retries < retries.get(msg.header):
                     msg.retries += 1
                     msg.timer.restart()
-                    send_msg(msg)
+                    send_parts(msg)
+                    waiting.append(msg)
                 # if there are no retries left
                 else:
+                    # if we have enough participants
+                    proc_curs.execute("SELECT participants FROM Bookings WHERE id=?", (msg.mt_id))
+                    res = proc_curs.fetchone()[0]
+                    msg.ls_parts = literal_eval(res)
                     
-                    # check if all participants have responded
-                    if all(msg.ls_parts.values()):
-                        msg.retries = retries.get(msg.msg)
-                        
+                    if sum(msg.ls_parts.values()) >= int(msg.min_parts):
+                        proc_curs.execute("UPDATE Bookings SET participants=? WHERE id=?", (str(msg.ls_parts), msg.mt_id))
+                        proc_curs.execute("UPDATE Bookings SET tentative=0 WHERE id=?", (msg.mt_id))
+                        sql_file.commit()
+                    # if we don't
+                    else:
+                        cancel_msg = Message("CANCEL", msg.source, msg.mt_id, "PARTICIPANTS")
+                        send_parts(cancel_msg, True)
+                        # TODO test this
+
                         
         if received and any(x.formed for x in received):
+            # pop the first message in the queue
             rec = received.pop(0)
             
-            if rec.msg == "REQUEST":
-                
-                
+            # if REQUEST message
+            if rec.header == "REQUEST":
                 room = check_avail(proc_curs, rec.date, rec.time)
                 if room != -1:
                     mt_id = booking(proc_curs, rec, room)
@@ -102,23 +117,81 @@ def processing():
                     rec.unavailable = False
                     
                 to_send.append(rec)
-                
-            elif rec.msg == "CANCEL":
+            # if CANCEL message
+            elif rec.header == "CANCEL":
                 # TODO check if meeting exists. If no, inform org, if yes send cancel to all parts. and remove from sql
-                pass
-            elif rec.msg == "ACCEPT":
+                proc_curs.execute("SELECT count(id) FROM Bookings WHERE id=?", (rec.mt_id))
+                res = proc_curs.fetchone()[0]
+                print(res)
+                # if meeting doesn't exist, inform requestor
+                if not res:
+                    rec.header = "RESPONSE"
+                    rec.resp_reason = "MEETING DNE"
+                    rec.rq_id = rec.mt_id
+                    
+                    dest = ip_local_sub[0:]
+                    dest.append(rec.source)
+                    dest = ".".join(dest)
+                    
+                    sock.sendto(rec.encode(), (dest, port_send))
+                # if the meeting exists, notify all confirmed participants
+                else:
+                    rec.resp_reason = "CANCELLED BY ORGANIZER"
+                    proc_curs.execute("SELECT participants FROM Bookings WHERE id=?", (rec.mt_id))
+                    res = proc_curs.fetchone()[0]
+                    rec.ls_parts = literal_eval(res)
+                    
+                    send_parts(rec, True)
+            elif rec.header == "ACCEPT":
                 # TODO check if meeting exists. If yes, update participant status, if no drop
-                pass
-            elif rec.msg == "REJECT":
+                
+                # check if meeting exists
+                proc_curs.execute("SELECT count(id) FROM Bookings WHERE id=?", (msg.mt_id))
+                res = proc_curs.fetchone()[0]
+                # if meeting is not found
+                if not res:
+                    rec.header = "RESPONSE"
+                    rec.resp_reason = "MEETING DNE"
+                    
+                    dest = ip_local_sub[0:]
+                    dest.append(msg.source)
+                    dest = ".".join(dest)
+                    
+                    sock.sendto(msg.encode(), (dest, port_send))
+                else:
+                    # get participants
+                    proc_curs.execute("SELECT participants FROM Bookings WHERE id=?", (msg.mt_id))
+                    res = proc_curs.fetchone()[0]
+                    msg.ls_parts = literal_eval(res)
+                    
+                    # check if requestor is a participant
+                    if msg.source in msg.ls_parts.keys():
+                        # set participant to accepted
+                        msg[source] = 1
+                        # update sql entry
+                        proc_curs.execute("UPDATE Bookings SET participants=? WHERE id=?", (str(msg.ls_parts), msg.mt_id))
+                    # if not participant
+                    else:
+                        rec.header = "RESPONSE"
+                        rec.resp_reason = "NOT INVITED"
+                        
+                        dest = ip_local_sub[0:]
+                        dest.append(msg.source)
+                        dest = ".".join(dest)
+                        
+                        # send rude reply
+                        sock.sendto(msg.encode(), (dest, port_send))
+                
+            elif rec.header == "REJECT":
                 # do nothing
                 pass
-            elif rec.msg == "WITHDRAW":
+            elif rec.header == "WITHDRAW":
                 # TODO check meeting exists. check part invited, if yes to both send withdraw to org, update part status, re-check min part
                 # TODO if min part not met, resend invs to all rejects
                 # TODO if still not enough, send cancel to all parts. inc. org.
                 # TODO update meeting as req'd
                 pass
-            elif rec.msg == "ADD":
+            elif rec.header == "ADD":
                 # TODO check meeting exists. check part invited. if no, reply with cancel, if yes send confirm, send added to org, update part status
                 pass
             
@@ -154,35 +227,35 @@ def send():
         if to_send:
             snd = to_send.pop(0)
             # If the message to deal with is a booking request
-            if snd.msg == "REQUEST":
+            if snd.header == "REQUEST":
                 # If the room isn't available
                 if snd.unavailable == True:
                     # Construct the message
-                    msg = Message("RESPONSE", snd.source, snd.rq_id, "ROOM UNAVAILABLE")
+                    snd.header = "RESPONSE"
+                    snd.resp_reason = "ROOM UNAVAILABLE"
                     # Construct the destination IP based on local subnet and ID
                     dest = ip_local_sub[0:]
-                    dest.append(msg.source)
+                    dest.append(snd.source)
                     dest = ".".join(dest)
-                    print(F"Sending {msg.encode()} to {dest}")
+                    print(F"Sending {snd.encode()} to {dest}")
                     # Send the message to the requestor
-                    sock.sendto(msg.encode(), (dest, port_send))
+                    sock.sendto(snd.encode(), (dest, port_send))
                 # If the room is available
                 else:
                     # Construct the invitation message
-                    msg = Message("INVITE", snd.source, snd.mt_id, snd.date, snd.time, snd.topic, snd.source)
-                    msg.ls_parts = snd.ls_parts
-                    print(F"Sending {msg.encode()} to {msg.ls_parts}")
+                    snd.header = "INVITE"
+                    print(F"Sending {snd.encode()} to {snd.ls_parts}")
                     
                     # Send the messages
-                    send_msg(msg)
+                    send_parts(snd)
                     
                     # set timout and retries
-                    msg.timer.set_timeout(timeouts.get("INVITE"))
-                    msg.retries = retries.get("INVITE")
+                    snd.timer.set_timeout(timeouts.get("INVITE"))
+                    snd.retries = retries.get("INVITE")
                     # start timer
-                    msg.timer.change_status(True)
+                    snd.timer.change_status(True)
                     # add message to waiting list
-                    waiting.append(msg)
+                    waiting.append(snd)
                     
                     # update expiry state of all waiting messages
                     for i in waiting:
@@ -192,10 +265,11 @@ def send():
                     waiting.sort(key=lambda x: x.timer.time_left.seconds)
                     
 
-def send_msg(msg):
+def send_parts(msg, group=0):
     # Send the messages
+    #print(F"Message to be sent: {msg.encode()}")
     for i in list(msg.ls_parts.keys()): 
-        if msg.ls_parts.get(i):
+        if msg.ls_parts.get(i) != group:
             continue
         dest = ip_local_sub[0:]
         dest.append(str(i))
