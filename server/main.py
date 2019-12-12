@@ -43,7 +43,7 @@ def main():
     if curs.fetchone()[0] != 1:
         print("Creating table")
         create_table()
-
+    
     # create the threads
     thread_listen = threading.Thread(target=listen, daemon=True)       # listener thread
     thread_proc = threading.Thread(target=processing, daemon=True)      # processing thread
@@ -96,6 +96,16 @@ def processing():
                         proc_curs.execute("UPDATE Bookings SET participants=? WHERE id=?", (str(msg.ls_parts), msg.mt_id))
                         proc_curs.execute("UPDATE Bookings SET tentative=0 WHERE id=?", (msg.mt_id))
                         sql_file.commit()
+                        
+                        msg.header = "SCHEDULED"
+                        
+                        dest = ip_local_sub[0:]
+                        dest.append(msg.source)
+                        dest = ".".join(dest)
+                        
+                        # send confirmation to org that meeting is scheduled
+                        sock.sendto(msg.encode(), (dest, port_send))
+                        
                     # if we don't
                     else:
                         cancel_msg = Message("CANCEL", msg.source, msg.mt_id, "PARTICIPANTS")
@@ -113,13 +123,14 @@ def processing():
                 if room != -1:
                     mt_id = booking(proc_curs, rec, room)
                     rec.mt_id = str(mt_id)
+                    rec.room = room
                     sql_file.commit()
                     rec.unavailable = False
                     
                 to_send.append(rec)
             # if CANCEL message
             elif rec.header == "CANCEL":
-                # TODO check if meeting exists. If no, inform org, if yes send cancel to all parts. and remove from sql
+                # TODO test this
                 proc_curs.execute("SELECT count(id) FROM Bookings WHERE id=?", (rec.mt_id))
                 res = proc_curs.fetchone()[0]
                 print(res)
@@ -143,10 +154,9 @@ def processing():
                     
                     send_parts(rec, True)
             elif rec.header == "ACCEPT":
-                # TODO check if meeting exists. If yes, update participant status, if no drop
-                
+                # TODO test this
                 # check if meeting exists
-                proc_curs.execute("SELECT count(id) FROM Bookings WHERE id=?", (msg.mt_id))
+                proc_curs.execute("SELECT count(id) FROM Bookings WHERE id=?", (rec.mt_id))
                 res = proc_curs.fetchone()[0]
                 # if meeting is not found
                 if not res:
@@ -154,46 +164,183 @@ def processing():
                     rec.resp_reason = "MEETING DNE"
                     
                     dest = ip_local_sub[0:]
-                    dest.append(msg.source)
+                    dest.append(rec.source)
                     dest = ".".join(dest)
                     
-                    sock.sendto(msg.encode(), (dest, port_send))
+                    sock.sendto(rec.encode(), (dest, port_send))
                 else:
                     # get participants
-                    proc_curs.execute("SELECT participants FROM Bookings WHERE id=?", (msg.mt_id))
+                    proc_curs.execute("SELECT participants FROM Bookings WHERE id=?", (rec.mt_id))
                     res = proc_curs.fetchone()[0]
-                    msg.ls_parts = literal_eval(res)
+                    rec.ls_parts = literal_eval(res)
                     
                     # check if requestor is a participant
-                    if msg.source in msg.ls_parts.keys():
+                    if rec.source in rec.ls_parts.keys():
                         # set participant to accepted
-                        msg[source] = 1
+                        rec[rec.source] = 1
                         # update sql entry
-                        proc_curs.execute("UPDATE Bookings SET participants=? WHERE id=?", (str(msg.ls_parts), msg.mt_id))
+                        proc_curs.execute("UPDATE Bookings SET participants=? WHERE id=?", (str(rec.ls_parts), rec.mt_id))
+                        
+                        # confirm with requestor
+                        rec.header = "CONFIRM"
+                        
+                        dest = ip_local_sub[0:]
+                        dest.append(rec.source)
+                        dest = ".".join(dest)
+                        
+                        # send confirmation
+                        sock.sendto(rec.encode(), (dest, port_send))
                     # if not participant
                     else:
                         rec.header = "RESPONSE"
                         rec.resp_reason = "NOT INVITED"
                         
                         dest = ip_local_sub[0:]
-                        dest.append(msg.source)
+                        dest.append(rec.source)
                         dest = ".".join(dest)
                         
                         # send rude reply
-                        sock.sendto(msg.encode(), (dest, port_send))
+                        sock.sendto(rec.encode(), (dest, port_send))
                 
             elif rec.header == "REJECT":
-                # do nothing
+                # do nothing (we assume invitation rejected until told otherwise)
                 pass
             elif rec.header == "WITHDRAW":
                 # TODO check meeting exists. check part invited, if yes to both send withdraw to org, update part status, re-check min part
                 # TODO if min part not met, resend invs to all rejects
                 # TODO if still not enough, send cancel to all parts. inc. org.
                 # TODO update meeting as req'd
-                pass
+                
+                # check if meeting exists
+                proc_curs.execute("SELECT count(id) FROM Bookings WHERE id=?", (rec.mt_id))
+                proc_curs.execute("SELECT tentative FROM Bookings WHERE id=?", (rec.mt_id))
+                res[0] = proc_curs.fetchone()[0]
+                res[1] = proc_curs.fetchone()[0]
+                # if meeting is not found or is still tentative
+                if (not res[0]) or res[1]:
+                    rec.header = "CANCEL"
+                    rec.resp_reason = "MEETING NOT SCHEDULED"
+                    
+                    dest = ip_local_sub[0:]
+                    dest.append(rec.source)
+                    dest = ".".join(dest)
+                    
+                    sock.sendto(rec.encode(), (dest, port_send))
+                # if meeting is found/scheduled
+                else:
+                    # get participants
+                    proc_curs.execute("SELECT participants FROM Bookings WHERE id=?", (rec.mt_id))
+                    res = proc_curs.fetchone()[0]
+                    rec.ls_parts = literal_eval(res)
+                    
+                    # check if requestor is a participant
+                    if rec.source in rec.ls_parts.keys():
+                        # set participant to rejected
+                        rec[rec.source] = 0
+                        # update sql entry
+                        proc_curs.execute("UPDATE Bookings SET participants=? WHERE id=?", (str(rec.ls_parts), rec.mt_id))
+                        
+                        # get organizer ip
+                        proc_curs.execute("SELECT organizer FROM Bookings WHERE id=?", (rec.mt_id))
+                        res = proc_curs.fetchone()[0]
+                        
+                        # inform organizer
+                        rec.header = "WITHDRAW"
+                        
+                        dest = ip_local_sub[0:]
+                        dest.append(rec.res)
+                        dest = ".".join(dest)
+                        
+                        # send inform
+                        sock.sendto(rec.encode(), (dest, port_send))
+                        
+                        proc_curs.execute("SELECT * FROM Bookings WHERE id=?", (rec.mt_id))
+                        res = proc_curs.fetchone()
+                        
+                        parts = ",".join([str(x) for x in list(rec.ls_parts.keys())])
+                        rereq = Message("REQUEST", -1, res[1], res[2], res[4], parts, res[8])
+                        rereq.mt_id = rec.mt_id
+                        rereq.decode(rec.source, rereq)
+                        rereq.unavailable = False
+                        
+                        to_send.append(rereq)
+                        
+                    # if not invited
+                    else:
+                        rec.header = "RESPONSE"
+                        rec.resp_reason = "NOT INVITED"
+                        
+                        dest = ip_local_sub[0:]
+                        dest.append(rec.source)
+                        dest = ".".join(dest)
+                        
+                        # send rude reply
+                        sock.sendto(rec.encode(), (dest, port_send))
             elif rec.header == "ADD":
-                # TODO check meeting exists. check part invited. if no, reply with cancel, if yes send confirm, send added to org, update part status
-                pass
+                # TODO test this
+                # check if meeting exists
+                proc_curs.execute("SELECT count(id) FROM Bookings WHERE id=?", (rec.mt_id))
+                proc_curs.execute("SELECT tentative FROM Bookings WHERE id=?", (rec.mt_id))
+                res[0] = proc_curs.fetchone()[0]
+                res[1] = proc_curs.fetchone()[0]
+                # if meeting is not found or is still tentative
+                if (not res[0]) or res[1]:
+                    rec.header = "CANCEL"
+                    rec.resp_reason = "MEETING NOT SCHEDULED"
+                    
+                    dest = ip_local_sub[0:]
+                    dest.append(rec.source)
+                    dest = ".".join(dest)
+                    
+                    sock.sendto(rec.encode(), (dest, port_send))
+                # if meeting is found/scheduled
+                else:
+                    # get participants
+                    proc_curs.execute("SELECT participants FROM Bookings WHERE id=?", (rec.mt_id))
+                    res = proc_curs.fetchone()[0]
+                    rec.ls_parts = literal_eval(res)
+                    
+                    # check if requestor is a participant
+                    if rec.source in rec.ls_parts.keys():
+                        # set participant to accepted
+                        rec[rec.source] = 1
+                        # update sql entry
+                        proc_curs.execute("UPDATE Bookings SET participants=? WHERE id=?", (str(rec.ls_parts), rec.mt_id))
+                        
+                        # confirm with requestor
+                        rec.header = "CONFIRM"
+                        
+                        dest = ip_local_sub[0:]
+                        dest.append(rec.source)
+                        dest = ".".join(dest)
+                        
+                        # send confirmation
+                        sock.sendto(rec.encode(), (dest, port_send))
+                        
+                        # get organizer ip
+                        proc_curs.execute("SELECT organizer FROM Bookings WHERE id=?", (rec.mt_id))
+                        res = proc_curs.fetchone()[0]
+                        
+                        # inform organizer
+                        rec.header = "ADDED"
+                        
+                        dest = ip_local_sub[0:]
+                        dest.append(rec.res)
+                        dest = ".".join(dest)
+                        
+                        # send inform
+                        sock.sendto(rec.encode(), (dest, port_send))
+                    # if not participant
+                    else:
+                        rec.header = "RESPONSE"
+                        rec.resp_reason = "NOT INVITED"
+                        
+                        dest = ip_local_sub[0:]
+                        dest.append(rec.source)
+                        dest = ".".join(dest)
+                        
+                        # send rude reply
+                        sock.sendto(rec.encode(), (dest, port_send))
             
         sql_file.close()
 
@@ -264,6 +411,12 @@ def send():
                     # sort the list from soonest expiry to latest
                     waiting.sort(key=lambda x: x.timer.time_left.seconds)
                     
+                    snd.header = "RESPONSE"
+                    snd.resp_reason = "PROCESSING"
+                    
+                    # let the requestor know we are processing
+                    sock.send(snd.encode(), (snd.source, port_send))
+                    
 
 def send_parts(msg, group=0):
     # Send the messages
@@ -281,8 +434,8 @@ def send_parts(msg, group=0):
 def create_table():
     '''Create the necessary server-side SQL table if it doesn't exist'''
     curs.execute('''create table Bookings (id integer unique primary key not null, \
-        date text not null, time text not null, organizer text not null, participants text not null, \
-        room integer not null, tentative integer not null)''')
+        date text not null, time text not null, organizer text not null, min_part integer not null, \
+        participants text not null, room integer not null, tentative integer not null, topic text)''')
     sql_file.commit()
     sql_file.close()
 
@@ -291,8 +444,8 @@ def booking(cursor, msg, room, tentative=True, cmd=False):
     '''Function to load and store bookings. 0 => store, 1 => load'''
     if not cmd:
     # store
-        params = (msg.date, msg.time, msg.source, str(msg.ls_parts), room, tentative)
-        cursor.execute("INSERT INTO Bookings VALUES (NULL, ?, ?, ?, ?, ?, ?)", params)
+        params = (msg.date, msg.time, msg.source, msg.min_parts, str(msg.ls_parts), room, tentative, msg.topic)
+        cursor.execute("INSERT INTO Bookings VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?)", params)
         params = (msg.date, msg.time, room)
         cursor.execute("SELECT id FROM Bookings WHERE date=? AND time=? AND room=?", params)
         return cursor.fetchone()[0]
