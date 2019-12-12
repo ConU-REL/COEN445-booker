@@ -53,5 +53,6 @@ class Timer:
         
     def restart(self):
         self.time_left = self.time
+        self.expired = self.time_left.seconds == 0
         self.expires_at = datetime.now() + self.time
         self.state = True

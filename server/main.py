@@ -33,7 +33,7 @@ to_send = []
 waiting = []
 
 # Timeouts
-timeouts = {'INVITE':15}
+timeouts = {'INVITE':5}
 retries = {'INVITE':3}
 
 
@@ -80,21 +80,21 @@ def processing():
                     waiting.append(msg)
                     break
                 # check if message has any retries left
-                if msg.retries < retries.get(msg.header):
+                if msg.retries < retries.get(msg.header)-1:
                     msg.retries += 1
                     msg.timer.restart()
                     send_parts(msg)
                     waiting.append(msg)
                 # if there are no retries left
                 else:
-                    # if we have enough participants
-                    proc_curs.execute("SELECT participants FROM Bookings WHERE id=?", (msg.mt_id))
+                    # check if we have enough participants
+                    proc_curs.execute("SELECT participants FROM Bookings WHERE id=?", (msg.mt_id,))
                     res = proc_curs.fetchone()[0]
                     msg.ls_parts = literal_eval(res)
-                    
+
                     if sum(msg.ls_parts.values()) >= int(msg.min_parts):
                         proc_curs.execute("UPDATE Bookings SET participants=? WHERE id=?", (str(msg.ls_parts), msg.mt_id))
-                        proc_curs.execute("UPDATE Bookings SET tentative=0 WHERE id=?", (msg.mt_id))
+                        proc_curs.execute("UPDATE Bookings SET tentative=0 WHERE id=?", (msg.mt_id,))
                         sql_file.commit()
                         
                         msg.header = "SCHEDULED"
@@ -108,9 +108,20 @@ def processing():
                         
                     # if we don't
                     else:
-                        cancel_msg = Message("CANCEL", msg.source, msg.mt_id, "PARTICIPANTS")
-                        send_parts(cancel_msg, True)
+                        # cancel_msg = Message("CANCEL", msg.source, msg.mt_id, "PARTICIPANTS")
+                        msg.header = "CANCEL"
+                        msg.resp_reason = "PARTICIPANTS"
+                        send_parts(msg, True)
+                        
+                        msg.header = "NOT SCHEDULED"
+                        dest = ip_local_sub[0:]
+                        dest.append(msg.source)
+                        dest = ".".join(dest)
+                        
+                        # send confirmation to org that meeting is not scheduled
+                        sock.sendto(msg.encode(), (dest, port_send))
                         # TODO test this
+                        
 
                         
         if received and any(x.formed for x in received):
@@ -398,7 +409,6 @@ def send():
                     
                     # set timout and retries
                     snd.timer.set_timeout(timeouts.get("INVITE"))
-                    snd.retries = retries.get("INVITE")
                     # start timer
                     snd.timer.change_status(True)
                     # add message to waiting list
@@ -410,12 +420,15 @@ def send():
                     
                     # sort the list from soonest expiry to latest
                     waiting.sort(key=lambda x: x.timer.time_left.seconds)
-                    
-                    snd.header = "RESPONSE"
-                    snd.resp_reason = "PROCESSING"
+                    resp = Message("RESPONSE", snd.source)
+                    resp.resp_reason = "PROCESSING"
+                    resp.rq_id = snd.rq_id
                     
                     # let the requestor know we are processing
-                    sock.send(snd.encode(), (snd.source, port_send))
+                    dest = ip_local_sub[0:]
+                    dest.append(snd.source)
+                    dest = ".".join(dest)
+                    sock.sendto(resp.encode(), (dest, port_send))
                     
 
 def send_parts(msg, group=0):

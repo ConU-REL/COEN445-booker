@@ -8,6 +8,8 @@ class Message:
         self.source = source
         self.args = list(args)
         self.formed = False
+        self.resp_reason = ""
+        self.rq_id = -1
         
         # instantiate timer
         self.timer = Timer()
@@ -28,6 +30,23 @@ class Message:
             self.topic = self.args[3]
             self.org = self.args[4]
             
+        elif self.header == "RESPONSE":
+            self.rq_id = self.args[0]
+            self.resp_reason = self.args[1]
+            
+        elif self.header == "SCHEDULED":
+            self.rq_id = self.args[0]
+            self.mt_id = self.args[1]
+            self.room = self.args[2]
+            self.ls_parts = self.args[3]
+            
+        elif self.header == "NOT SCHEDULED":
+            self.rq_id = self.args[0]
+            self.date = self.args[1]
+            self.time = self.args[2]
+            self.min_parts = self.args[3]
+            self.ls_parts = self.args[4]
+            self.topic = self.args[5]
         self.formed = True
     
     def encode(self):

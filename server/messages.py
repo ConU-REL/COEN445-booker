@@ -11,6 +11,7 @@ class Message:
         self.done = False
         self.room = -1
         self.resp_reason = ""
+        self.rq_id = -1
         
         # instantiate timer
         self.timer = Timer()
@@ -72,7 +73,10 @@ class Message:
         elif self.header == "WITHDRAW":
             concat = ",;,".join([self.header, self.mt_id, self.source])
         elif self.header == "SCHEDULED":
-            concat = ",;,".join([self.header, self.rq_id, self.mt_id, self.room, \
+            concat = ",;,".join([self.header, self.rq_id, self.mt_id, str(self.room), \
                 ",".join([str(x) for x in list(self.ls_parts.keys()) if self.ls_parts[x]])])
+        elif self.header == "NOT SCHEDULED":
+            concat = ",;,".join([self.header, self.rq_id, self.date, self.time, self.min_parts, \
+                ",".join([str(x) for x in list(self.ls_parts.keys()) if self.ls_parts[x]]), self.topic])
         return concat.encode('utf-8')
         

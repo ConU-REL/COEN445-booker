@@ -17,7 +17,7 @@ curs = sql_file.cursor()
 
 
 # starting request id
-request_id = 0
+request_id = 1
 
 # ****** UDP Settings ******
 
@@ -47,8 +47,8 @@ def main():
         print("Creating table")
         create_table()
     curs.execute("SELECT count(id) from Bookings")
-    request_id = curs.fetchone()[0]
-    sql_file.close()
+    request_id = curs.fetchone()[0]+1
+    
 
     thread_recv = threading.Thread(target=recv, daemon=True)
     thread_proc = threading.Thread(target=proc, daemon=True)
@@ -121,10 +121,14 @@ def main():
                 exit()
                 
             msg = Message("REQUEST", 0, str(request_id), date.strftime("%Y-%m-%d"), dt.strftime("%H:%M:%S"), min_parts, ",".join(parts), topic)
+            msg.rq_id = str(request_id)
+            params = (int(msg.rq_id), msg.args[1], msg.args[2], id_local, -1, msg.args[5], -1)
+            print(params)
+            curs.execute("INSERT INTO Bookings VALUES (?, ?, ?, ?, ?, ?, ?)", params)
+            sql_file.commit()
             request_id += 1
             
             msg.timer.set_timeout(timeouts.get(msg.header))
-            msg.retries = retries.get(msg.header)
             
             sock.sendto(msg.encode(), (ip_server, port_send))
             msg.timer.change_status(True)
@@ -132,6 +136,7 @@ def main():
         elif inp == "q":
             exit()
 
+    sql_file.close()
 
 def recv():
     while True:
@@ -142,8 +147,8 @@ def recv():
             print(F"Received {data} from {addr[0]}")
         except (BlockingIOError, ConnectionResetError):
             pass
-                
-                
+
+
 def proc():
     while True:
         sql_file = sqlite3.connect("client/local_db.db")
@@ -157,18 +162,46 @@ def proc():
                 if not waiting:
                     break
                 msg = waiting.pop(0)
+                
+                # check if message has been satisfied
+                if msg.header == "REQUEST":
+                    proc_curs.execute("SELECT confirmed FROM Bookings WHERE id=?", (msg.rq_id,))
+                    res = proc_curs.fetchone()[0]
+                    if(not res):
+                        continue
+                    
                 # if we reach a message that is still timed out, all the following ones will be too
                 if not msg.timer.expired:
                     waiting.append(msg)
                     break
+                
                 # check if message has any retries left
-                if msg.retries < retries.get(msg.header):
+                elif msg.retries < retries.get(msg.header):
                     msg.retries += 1
                     msg.timer.restart()
+                    print("RETRYING")
                     sock.sendto(msg.encode(), (ip_server, port_send))
                     waiting.append(msg)
                 # if there are no retries left, do nothing
+                
+        if received and any(x.formed for x in received):
+                # pop the first message in the queue
+                rec = received.pop(0)
+                if rec.header == "RESPONSE":
+                    if rec.resp_reason == "PROCESSING":
+                        proc_curs.execute("UPDATE Bookings SET confirmed=? WHERE id=?", (0, rec.rq_id))
+                        sql_file.commit()
+                
+                elif rec.header == "SCHEDULED":
+                    proc_curs.execute("UPDATE Bookings SET confirmed=? WHERE id=?", (1, rec.rq_id))
+                    proc_curs.execute("UPDATE Bookings SET room=? WHERE id=?", (rec.room, rec.rq_id))
+                    sql_file.commit()
+                elif rec.header == "NOT SCHEDULED":
+                    proc_curs.execute("DELETE FROM Bookings WHERE id=?", (rec.rq_id))
+                    sql_file.commit()
     
+        sql_file.close()
+                    
 def main_menu():
     print("Main Menu")
     print("a: Add Booking", "q: quit", sep="\n")
