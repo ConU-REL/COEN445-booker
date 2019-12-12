@@ -120,10 +120,11 @@ def processing():
                         
                         # send confirmation to org that meeting is not scheduled
                         sock.sendto(msg.encode(), (dest, port_send))
-                        # TODO test this
+                        
+                        proc_curs.execute("DELETE FROM Bookings WHERE id=?", (msg.mt_id))
+                        sql_file.commit()
                         
 
-                        
         if received and any(x.formed for x in received):
             # pop the first message in the queue
             rec = received.pop(0)
@@ -166,12 +167,15 @@ def processing():
                     
                     rec.header = "RESPONSE"
                     rec.resp_reason = "CANCEL RECEIVED"
+                    rec.rq_id = rec.mt_id
                     
                     dest = ip_local_sub[0:]
                     dest.append(rec.source)
                     dest = ".".join(dest)
                     
                     sock.sendto(rec.encode(), (dest, port_send))
+                    proc_curs.execute("DELETE FROM Bookings WHERE id=?", (rec.mt_id,))
+                    sql_file.commit()
                     
             elif rec.header == "ACCEPT":
                 # TODO test this
@@ -443,14 +447,14 @@ def send():
 def send_parts(msg, group=0):
     # Send the messages
     #print(F"Message to be sent: {msg.encode()}")
-    for i in list(msg.ls_parts.keys()): 
+    print("Sending to participants")
+    for i in list(msg.ls_parts.keys()):
         if msg.ls_parts.get(i) != group:
             continue
         dest = ip_local_sub[0:]
         dest.append(str(i))
         dest = ".".join(dest)
         
-        print(F"Sending to {dest}")
         sock.sendto(msg.encode(), (dest, port_send))
 
 def create_table():

@@ -53,6 +53,6 @@ class Message:
         if self.header == "REQUEST":
             concat = ",;,".join([self.header] + self.args)
         if self.header == "CANCEL":
-            concat = ",;,".join([self.header, self.args[0]])
+            concat = ",;,".join([self.header, str(self.args[0])])
 
         return concat.encode('utf-8')
