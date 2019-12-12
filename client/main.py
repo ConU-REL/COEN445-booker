@@ -42,6 +42,7 @@ timeouts = {'REQUEST':15, 'CANCEL':15, 'RESPONSE':15}
 retries = {'REQUEST':3, 'CANCEL':3, 'RESPONSE':3}
     
 def main():
+    global ip_server
     curs.execute(''' SELECT count(name) FROM sqlite_master WHERE type='table' AND name='Bookings' ''')
     if curs.fetchone()[0] != 1:
         print("Creating table")
@@ -214,7 +215,10 @@ def proc():
                     print("RETRYING")
                     sock.sendto(msg.encode(), (ip_server, port_send))
                     waiting.append(msg)
-                # if there are no retries left, do nothing
+                # if there are no retries left, delete SQL entry
+                else:
+                    proc_curs.execute("DELETE FROM Bookings WHERE id=?", (msg.rq_id,))
+                    sql_file.commit()
                 
         if received and any(x.formed for x in received):
             # pop the first message in the queue
