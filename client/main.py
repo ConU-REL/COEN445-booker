@@ -152,6 +152,13 @@ def main():
             msg.timer.set_timeout(timeouts.get(msg.header))
             msg.timer.change_status(True)
             waiting.append(msg)
+        elif inp == "i":
+            print("Enter server IP: ", end="")
+            inp = input()
+            if not bool(re.search(r'^\d{1,3}.\d{1,3}.\d{1,3}.\d{1,3}$', inp)):
+                continue
+            ip_server = inp
+            print(ip_server)
         elif inp == "q":
             exit()
 
@@ -232,7 +239,7 @@ def proc():
                     
 def main_menu():
     print("Main Menu")
-    print("a: Add Booking", "c: Cancel Booking", "q: quit", sep="\n")
+    print("a: Add Booking", "c: Cancel Booking", "i: Enter Server IP", "q: quit", sep="\n")
     
     
 def create_table():
