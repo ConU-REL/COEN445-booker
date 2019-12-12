@@ -38,8 +38,8 @@ received = []
 waiting = []
 
 # Timeouts
-timeouts = {'REQUEST':15, 'CANCEL':15, 'RESPONSE':15}
-retries = {'REQUEST':3, 'CANCEL':3, 'RESPONSE':3}
+timeouts = {'REQUEST':5, 'CANCEL':5, 'RESPONSE':5, 'ACCEPT':5}
+retries = {'REQUEST':3, 'CANCEL':3, 'RESPONSE':3, 'ACCEPT':3}
     
 def main():
     global ip_server
@@ -159,7 +159,38 @@ def main():
             if not bool(re.search(r'^\d{1,3}.\d{1,3}.\d{1,3}.\d{1,3}$', inp)):
                 continue
             ip_server = inp
-            print(ip_server)
+            print("Server IP set to", ip_server)
+        elif inp == "p":
+            print("Pending Invitations")
+            curs.execute("SELECT * FROM Bookings WHERE organizer!=?", (id_local,))
+            res = curs.fetchall()
+            if not res:
+                print("No pending invites")
+                continue
+            print(*res, sep="\n")
+            print("Which invitation do you want to manage? ", end="")
+            inp = input()
+            if not bool(re.search(r'^\d{1,2}$', inp)):
+                print("Bad Entry.")
+                continue
+            if int(inp) == 0 or int(inp) not in [x[0] for x in res]:
+                print("Bad Entry.")
+                continue
+            print("Do you want to accept this invitation? (y/n): ", end="")
+            conf = input()
+            if not bool(re.search(r'^y|n$', conf)):
+                print("Bad Entry.")
+                continue
+            if conf == "y":
+                msg = Message("ACCEPT", "127.0.0.1", inp)
+                sock.sendto(msg.encode(), (ip_server, port_send))
+                msg.timer.set_timeout(timeouts.get(msg.header))
+                msg.timer.change_status(True)
+                waiting.append(msg)
+                curs.execute("UPDATE Bookings SET confirmed=?", (0,))
+            else:
+                curs.execute("DELETE FROM Bookings WHERE mt_id=?", (inp,))
+            sql_file.commit()
         elif inp == "q":
             exit()
 
@@ -201,6 +232,7 @@ def proc():
                     res = proc_curs.fetchone()[0]
                     if not res:
                         continue
+                # elif
                 
                     
                 # if we reach a message that is still timed out, all the following ones will be too
@@ -227,7 +259,6 @@ def proc():
                 if rec.resp_reason == "PROCESSING":
                     proc_curs.execute("UPDATE Bookings SET confirmed=? WHERE id=?", (0, rec.rq_id))
                 elif rec.resp_reason == "CANCEL RECEIVED" or rec.resp_reason == "MEETING DNE":
-                    print(rec.rq_id)
                     proc_curs.execute("DELETE FROM Bookings WHERE mt_id=?", (rec.rq_id,))
             
             elif rec.header == "SCHEDULED":
@@ -236,14 +267,19 @@ def proc():
                 proc_curs.execute("UPDATE Bookings SET mt_id=? WHERE id=?", (rec.mt_id, rec.rq_id))
             elif rec.header == "NOT SCHEDULED":
                 proc_curs.execute("DELETE FROM Bookings WHERE id=?", (rec.rq_id,))
+            elif rec.header == "INVITE":
+                proc_curs.execute("SELECT count(id) FROM Bookings WHERE mt_id=?", (rec.mt_id,))
+                res = proc_curs.fetchone()[0]
+                if not res:
+                    params = (request_id, rec.mt_id, rec.date, rec.time, rec.org, -1, rec.topic, -1)
+                    proc_curs.execute("INSERT INTO Bookings VALUES (?, ?, ?, ?, ?, ?, ?, ?)", params)
             
             sql_file.commit()
-        
         sql_file.close()
                     
 def main_menu():
     print("Main Menu")
-    print("a: Add Booking", "c: Cancel Booking", "i: Enter Server IP", "q: quit", sep="\n")
+    print("a: Add Booking", "c: Cancel Booking", "i: Enter Server IP", "p: Pending Invites", "q: quit", sep="\n")
     
     
 def create_table():

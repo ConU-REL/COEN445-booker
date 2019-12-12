@@ -54,5 +54,7 @@ class Message:
             concat = ",;,".join([self.header] + self.args)
         if self.header == "CANCEL":
             concat = ",;,".join([self.header, str(self.args[0])])
+        if self.header == "ACCEPT":
+            concat = ",;,".join([self.header, str(self.args[0])])
 
         return concat.encode('utf-8')

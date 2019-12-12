@@ -199,11 +199,12 @@ def processing():
                     rec.ls_parts = literal_eval(res)
                     
                     # check if requestor is a participant
-                    if rec.source in rec.ls_parts.keys():
+                    if int(rec.source) in list(rec.ls_parts.keys()):
                         # set participant to accepted
-                        rec[rec.source] = 1
+                        rec.ls_parts[rec.source] = 1
                         # update sql entry
                         proc_curs.execute("UPDATE Bookings SET participants=? WHERE id=?", (str(rec.ls_parts), rec.mt_id))
+                        sql_file.commit()
                         
                         # confirm with requestor
                         rec.header = "CONFIRM"

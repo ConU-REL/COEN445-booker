@@ -67,7 +67,7 @@ class Message:
         elif self.header == "CANCEL":
             concat = ",;,".join([self.header, self.mt_id, self.resp_reason])
         elif self.header == "CONFIRM":
-            concat = ",;,".join([self.header, self.mt_id, self.room])
+            concat = ",;,".join([self.header, self.mt_id, str(self.room)])
         elif self.header == "ADDED":
             concat = ",;,".join([self.header, self.mt_id, self.source])
         elif self.header == "WITHDRAW":
