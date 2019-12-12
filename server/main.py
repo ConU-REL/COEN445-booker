@@ -32,7 +32,8 @@ to_send = []
 waiting = []
 
 # Timeouts
-timeouts = {'request':15}
+timeouts = {'INVITE':15}
+retries = {'INVITE':3}
 
 
 def main():
@@ -62,27 +63,46 @@ def main():
 
 def processing():
     while True:
+        sql_file = sqlite3.connect("server/server_db.db")
+        proc_curs = sql_file.cursor()
         # process all messages waiting on timeout first (list sorted by soonest first)
         while waiting:
-            pass
+            for i in waiting:
+                i.timer.update()
+            waiting.sort(key=lambda x: x.timer.time_left.seconds)
+            
+            for msg in waiting:
+                # if we reach a message that is still timed out, all the following ones will be too
+                if not msg.timer.expired:
+                    break
+                # check if message has any retries left
+                if msg.retries < retries.get(msg.msg):
+                    msg.retries += 1
+                    msg.timer.restart()
+                    send_msg(msg)
+                # if there are no retries left
+                else:
+                    
+                    # check if all participants have responded
+                    if all(msg.ls_parts.values()):
+                        msg.retries = retries.get(msg.msg)
+                        
+                        
         if received and any(x.formed for x in received):
             rec = received.pop(0)
             
             if rec.msg == "REQUEST":
-                rec.timer.set_timeout(timeouts.get("request"))
-                sql_file = sqlite3.connect("server/server_db.db")
-                proc_curs = sql_file.cursor()
+                
+                
                 room = check_avail(proc_curs, rec.date, rec.time)
                 if room != -1:
-                    booking(proc_curs, rec, room)
+                    mt_id = booking(proc_curs, rec, room)
+                    rec.mt_id = str(mt_id)
                     sql_file.commit()
-                    
                     rec.unavailable = False
-                    to_send.append(rec)
-                else:
-                    # TODO reply ROOM UNAVAILABLE
-                    to_send.append(rec)
-                sql_file.close()
+                    
+                to_send.append(rec)
+                
             elif rec.msg == "CANCEL":
                 # TODO check if meeting exists. If no, inform org, if yes send cancel to all parts. and remove from sql
                 pass
@@ -101,6 +121,11 @@ def processing():
             elif rec.msg == "ADD":
                 # TODO check meeting exists. check part invited. if no, reply with cancel, if yes send confirm, send added to org, update part status
                 pass
+            
+        sql_file.close()
+
+def update_meeting(msg):
+    pass
 
 
 def listen():
@@ -128,15 +153,56 @@ def send():
     while True:
         if to_send:
             snd = to_send.pop(0)
+            # If the message to deal with is a booking request
             if snd.msg == "REQUEST":
+                # If the room isn't available
                 if snd.unavailable == True:
+                    # Construct the message
                     msg = Message("RESPONSE", snd.source, snd.rq_id, "ROOM UNAVAILABLE")
+                    # Construct the destination IP based on local subnet and ID
                     dest = ip_local_sub[0:]
                     dest.append(msg.source)
                     dest = ".".join(dest)
                     print(F"Sending {msg.encode()} to {dest}")
+                    # Send the message to the requestor
                     sock.sendto(msg.encode(), (dest, port_send))
+                # If the room is available
+                else:
+                    # Construct the invitation message
+                    msg = Message("INVITE", snd.source, snd.mt_id, snd.date, snd.time, snd.topic, snd.source)
+                    msg.ls_parts = snd.ls_parts
+                    print(F"Sending {msg.encode()} to {msg.ls_parts}")
+                    
+                    # Send the messages
+                    send_msg(msg)
+                    
+                    # set timout and retries
+                    msg.timer.set_timeout(timeouts.get("INVITE"))
+                    msg.retries = retries.get("INVITE")
+                    # start timer
+                    msg.timer.change_status(True)
+                    # add message to waiting list
+                    waiting.append(msg)
+                    
+                    # update expiry state of all waiting messages
+                    for i in waiting:
+                        i.timer.update()
+                    
+                    # sort the list from soonest expiry to latest
+                    waiting.sort(key=lambda x: x.timer.time_left.seconds)
+                    
 
+def send_msg(msg):
+    # Send the messages
+    for i in list(msg.ls_parts.keys()): 
+        if msg.ls_parts.get(i):
+            continue
+        dest = ip_local_sub[0:]
+        dest.append(str(i))
+        dest = ".".join(dest)
+        
+        print(F"Sending to {dest}")
+        sock.sendto(msg.encode(), (dest, port_send))
 
 def create_table():
     '''Create the necessary server-side SQL table if it doesn't exist'''

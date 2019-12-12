@@ -1,5 +1,6 @@
 from timer import Timer
 
+
 class Message:
     def __init__(self, msg=None, source=None, *args):
         # unpack arguments
@@ -10,6 +11,12 @@ class Message:
         
         # instantiate timer
         self.timer = Timer()
+        # number of times retried
+        self.retries = 0
+        
+        # message specific actions
+        if self.msg == "INVITE":
+            self.ls_parts = []
         
 
     def __str__(self):
@@ -26,8 +33,11 @@ class Message:
         self.args = parts[1:]
         
         if self.msg == "REQUEST":
+            # timeout stuff
             self.unavailable = True
-            self.retries = 0
+            
+            # details
+            self.mt_id = -1
             self.rq_id = self.args[0]
             self.date = self.args[1]
             self.time = self.args[2]
@@ -37,8 +47,8 @@ class Message:
             self.ls_parts = dict(zip(tmp,[0 for i in tmp]))
             self.args[4] = ",".join([str(x) for x in list(self.ls_parts.keys())])
             self.topic = self.args[5]
-        elif self.msg == "RESPONSE":
-            pass            
+            
+            
         self.formed = True
     
     def encode(self):
